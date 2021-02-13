@@ -1,0 +1,8 @@
+venv
+roms
+.venv
+*.bin
+.vscode
+*.png
+.pytest*
+__pycache__

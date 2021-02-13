@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "n64-decompile"
+version = "0.1.0"
+description = ""
+authors = ["Justin Turpin <ionstream@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+click = "^7.1.2"
+Pillow = "^8.1.0"
+
+[tool.poetry.dev-dependencies]
+flake8 = "^3.8.4"
+pytest = "^6.2.2"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
