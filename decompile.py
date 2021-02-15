@@ -6,7 +6,7 @@ from pathlib import Path
 from PIL import Image
 from jtn64 import read_palette_rgb565, print_hex, BitReader, \
     iter_colors_rgb5a3, iter_colors_rgb565, iter_colors_rgb555a, \
-    iter_colors_ia8
+    iter_colors_ia8, Model
 
 
 def is_readable(t):
@@ -97,97 +97,28 @@ def dump_models():
 @cli.command()
 @click.argument("path")
 def dump_model_textures(path: str):
-    model = Path(path).read_bytes()
+    model = Model.parse_bytes(Path(path).read_bytes())
 
-    texture_header_offset = struct.unpack(">H", model[8:10])[0]
-    texture_header_data = model[texture_header_offset:]
+    print(f"Texture_count={model.texture_setup_header.texture_count}")
 
-    bytes_to_load = struct.unpack(">I", texture_header_data[0:4])[0]
-    texture_count = texture_header_data[5]
-    texture_data_start = 0x8 + (texture_count * 16)
-
-    print(f"Bytes to load={bytes_to_load}, texture_count={texture_count}")
-
-    for i in range(texture_count):
-        print(f"Image {i}:")
-
-        header_start = 0x8 + (i * 16)
-
-        segment_start = struct.unpack(
-            ">I", texture_header_data[header_start:header_start+4]
-        )[0]
-        texture_type = texture_header_data[header_start+5]
-        texture_width = texture_header_data[header_start+8]
-        texture_height = texture_header_data[header_start+9]
-
+    for texture_num, texture in enumerate(model.texture_data):
         print(
-            f"segment_start={segment_start:04x},"
-            f" texture_type={texture_type},"
-            f" width={texture_width}, y={texture_height}"
+            f" texture_type={texture.texture_type},"
+            f" width={texture.width}, y={texture.height}"
         )
 
-        # Types: 01=CI4, 02=CI8, 04=RGBA16, 08=RGBA32, 0x10=IA8,
-        # 01/CI4: block size is 8x8
+        image = Image.new('RGBA', (texture.width, texture.height))
 
-        image = Image.new('RGBA', (texture_width, texture_height))
-        image_data = texture_header_data[segment_start + texture_data_start:]
+        for p, color in enumerate(texture.to_rgba()):
+            y = texture.height - (p // texture.width) - 1
+            x = p % texture.width
 
-        if texture_type == 1:
-            # CI4
+            image.putpixel(
+                (x, y), color
+            )
 
-            palette = read_palette_rgb565(image_data)
-
-            reader = BitReader(image_data[16*2:])
-
-            for p in range(texture_height * texture_width):
-                color = palette[reader.read_sub(4)]
-
-                y = texture_height - (p // texture_width) - 1
-                x = p % texture_width
-
-                image.putpixel(
-                    (x, y), color
-                )
-
-            image.save(f"image_{i}.png")
-        elif texture_type == 4:
-            # RGBA16, probably 555A (5 bits per color and the last bit for alpha)
-
-            reader = BitReader(image_data)
-
-            for p, color in enumerate(iter_colors_rgb555a(image_data, texture_height * texture_width)):
-                y = texture_height - (p // texture_width) - 1
-                x = p % texture_width
-
-                image.putpixel(
-                    (x, y), color
-                )
-
-            image.save(f"image_{i}.png")
-        elif texture_type == 16:
-            # IA8
-
-            reader = BitReader(image_data)
-
-            for p, color in enumerate(iter_colors_ia8(image_data, texture_height * texture_width)):
-                y = texture_height - (p // texture_width) - 1
-                x = p % texture_width
-
-                image.putpixel(
-                    (x, y), color
-                )
-
-            image.save(f"image_{i}.png")
-        else:
-            print("Unable to render texture, unknown texture type.")
-
-        print()
+        image.save(f"image_{texture_num}.png")
 
 
 if __name__ == "__main__":
     cli()
-
-# Format:
-#  n64: little-endian
-#  z64: big-endian
-#  u64/v64: byte-swapped

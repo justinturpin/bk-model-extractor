@@ -1,3 +1,9 @@
+Format:
+ - n64: little-endian
+ - z64: big-endian
+ - u64/v64: byte-swapped (see util.py for details)
+
+
 Vertex format `{x, y, z, f, t, c, r, g, b, a}`
 
 ```c

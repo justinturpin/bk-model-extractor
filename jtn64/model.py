@@ -44,9 +44,9 @@ class TextureSubHeader:
         texture_type = TextureType(texture_type)
 
         if texture_type is TextureType.CI4:
-            texture_data_length = 2**4 + (width * height / 2)
+            texture_data_length = (2 * 2**4) + (width * height / 2)
         elif texture_type is TextureType.CI8:
-            texture_data_length = 2**8 + (width * height)
+            texture_data_length = (2 * 2**8) + (width * height)
         elif texture_type is TextureType.RGBA16:
             texture_data_length = width * height * 2
         elif texture_type is TextureType.IA8:
@@ -105,7 +105,7 @@ class TextureData:
 
             # Palette is 16 bits (2 bytes) per pixel, and there are 16
             # colors since its a 4 bit palette, so image data starts at 32
-            reader = BitReader(self.data[16*2])
+            reader = BitReader(self.data[16*2:])
 
             for i in range(self.width * self.height):
                 result.append(palette[reader.read_sub(4)])
@@ -168,9 +168,10 @@ class Model:
         texture_data = []
 
         for sub_texture in texture_setup_header.texture_sub_headers:
-            texture_data_start = (
-                texture_setup_offset + sub_texture.segment_address_offset
-            )
+            texture_data_start = texture_setup_offset \
+                + sub_texture.segment_address_offset \
+                + 8 \
+                + (texture_setup_header.texture_count * 16)
 
             texture_data_end = (
                 texture_data_start + sub_texture.texture_data_length

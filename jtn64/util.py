@@ -37,7 +37,11 @@ class BitReader:
         if self._bits_remaining == 0:
             self._bits_remaining = 8
             self._byte_offset += 1
-            self._current_byte = self._data[self._byte_offset]
+
+            if self._byte_offset < len(self._data):
+                self._current_byte = self._data[self._byte_offset]
+            else:
+                self._current_byte = None
         elif self._bits_remaining < 0:
             raise ValueError("Failed to read along byte boundary.")
 
