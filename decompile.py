@@ -4,6 +4,7 @@ import click
 
 from pathlib import Path
 from PIL import Image
+import jtn64
 from jtn64 import read_palette_rgb565, print_hex, BitReader, \
     iter_colors_rgb5a3, iter_colors_rgb565, iter_colors_rgb555a, \
     iter_colors_ia8, Model
@@ -118,6 +119,30 @@ def dump_model_textures(path: str):
             )
 
         image.save(f"image_{texture_num}.png")
+
+
+@cli.command()
+@click.argument("path")
+def dump_model_displaylist(path: str):
+    model = Model.parse_bytes(Path(path).read_bytes())
+
+    print(f"Command count={model.display_list_setup_header.command_count}")
+
+    tris = 0
+
+    for command in model.display_list_setup_header.commands:
+        if command is jtn64.model.F3DCommand.G_TRI1:
+            tris += 1
+        elif command is jtn64.model.F3DCommand.G_TRI2:
+            tris += 2
+        elif command is jtn64.model.F3DCommand.G_QUAD:
+            tris += 2
+
+    print(f'tri commands={tris}')
+    print(f'header tris={model.model_header.tri_count}, verts={model.model_header.vert_count}')
+
+    for vertex in model.vertex_store_setup_header.vertices:
+        print(vertex)
 
 
 if __name__ == "__main__":

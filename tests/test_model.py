@@ -21,8 +21,8 @@ def test_parse_model():
     assert model.model_header.texture_setup_offset == 101
     assert model.model_header.display_list_setup_offset == 102
     assert model.model_header.vertex_store_setup_offset == 103
-    assert model.model_header.tri_count == 45
-    assert model.model_header.vert_count == 900
+    assert model.model_header.tri_count == 900
+    assert model.model_header.vert_count == 45
 
 
 def test_parse_model_real():
@@ -39,8 +39,8 @@ def test_parse_model_real():
         vertex_store_setup_offset=8184,
         animation_setup_offset=19696,
         collision_setup_offset=14208,
-        vert_count=274,
-        tri_count=370
+        vert_count=370,
+        tri_count=274
     )
 
     print(model.texture_setup_header)

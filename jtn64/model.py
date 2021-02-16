@@ -13,6 +13,59 @@ class TextureType(IntEnum):
     IA8 = 16
 
 
+class F3DCommand(IntEnum):
+    G_SPNOOP = 0x00
+    G_MTX = 0x01
+    G_VTX = 0x04
+    G_DL = 0x06
+    G_LOAD_UCODE = 0xAF
+    G_SetOtherMode_H = 0xBA
+    G_TRI2 = 0xB1
+    G_TRI1 = 0xBF
+    G_QUAD = 0xB5
+    G_CLEARGEOMETRYMODE = 0xB6
+    G_SETGEOMETRYMODE = 0xB7
+    G_ENDDL = 0xB8
+    G_TEXTURE = 0xBB
+    G_POPMTX = 0xBD
+    G_RDPLOADSYNC = 0xE6
+    G_RDPPIPESYNC = 0xE7
+    G_LOADTLUT = 0xF0
+    G_SETTILESIZE = 0xF2
+    G_LOADBLOCK = 0xF3
+    G_SETCOMBINE = 0xFC
+    G_SETTIMG = 0xFD
+    G_SETTILE = 0xF5
+
+
+@dataclass
+class Vertex:
+    position: Tuple[int, int, int]
+    flag: int
+    uv: Tuple[int, int]
+    rgb_or_norm: Tuple[int, int, int]
+    alpha: int
+
+    @classmethod
+    def from_bytes(cls: 'Vertex', data: bytes) -> 'Vertex':
+        p_x, p_y, p_z, \
+            flag, \
+            uv_x, uv_y, \
+            r, g, b, \
+            alpha = unpack(
+                ">hhhHhhBBBB",
+                data
+            )
+
+        return Vertex(
+            position=(p_x, p_y, p_z),
+            flag=flag,
+            uv=(uv_x, uv_y),
+            rgb_or_norm=(r, g, b),
+            alpha=alpha
+        )
+
+
 @dataclass
 class ModelHeader:
     """
@@ -122,10 +175,57 @@ class TextureData:
 
 
 @dataclass
+class DisplayListSetupHeader:
+    command_count: int
+    commands: List[F3DCommand]
+
+    @classmethod
+    def parse_bytes(cls: 'DisplayListSetupHeader', data: bytes) -> 'DisplayListSetupHeader':
+        command_count = unpack(">I", data[0:4])[0]
+        commands = []
+
+        for i in range(command_count):
+            command_data = data[i*8 + 8:i*8 + 16]
+
+            commands.append(F3DCommand(command_data[0]))
+
+        return DisplayListSetupHeader(
+            command_count=command_count,
+            commands=commands
+        )
+
+
+@dataclass
+class VertexStoreSetupHeader:
+    vertices: List[Vertex]
+
+    @classmethod
+    def parse_bytes(cls: 'VertexStoreSetupHeader', data: bytes) -> 'VertexStoreSetupHeader':
+        vertex_count_doubled = unpack(">H", data[0x16:0x18])[0]
+        vertices = []
+
+        for i in range(vertex_count_doubled // 2):
+            start_offset = 0x18 + i * 16
+            end_offset = start_offset + 16
+
+            vertices.append(
+                Vertex.from_bytes(data[start_offset:end_offset])
+            )
+
+        return VertexStoreSetupHeader(
+            vertices=vertices
+        )
+
+
+@dataclass
 class Model:
     model_header: ModelHeader
+
     texture_setup_header: TextureSetupHeader
     texture_data: List[TextureData]
+
+    display_list_setup_header: DisplayListSetupHeader
+    vertex_store_setup_header: VertexStoreSetupHeader
 
     @classmethod
     def parse_bytes(cls: 'Model', data: bytes) -> 'Model':
@@ -142,8 +242,8 @@ class Model:
             _effects_setup_offset, \
             _unused_2, \
             _unused_3, \
-            vert_count, \
-            tri_count = unpack(
+            tri_count, \
+            vert_count = unpack(
                 ">IIHHIIIIIIIIIHH", data[0:52]
             )
 
@@ -157,8 +257,8 @@ class Model:
             vertex_store_setup_offset=vertex_store_setup_offset,
             animation_setup_offset=animation_setup_offset,
             collision_setup_offset=collision_setup_offset,
-            vert_count=vert_count,
             tri_count=tri_count,
+            vert_count=vert_count,
         )
 
         texture_setup_header = TextureSetupHeader.parse_bytes(
@@ -186,8 +286,18 @@ class Model:
                 )
             )
 
+        display_list_setup_header = DisplayListSetupHeader.parse_bytes(
+            data[display_list_setup_offset:]
+        )
+
+        vertex_store_setup_header = VertexStoreSetupHeader.parse_bytes(
+            data[vertex_store_setup_offset:]
+        )
+
         return Model(
             model_header=model_header,
             texture_setup_header=texture_setup_header,
             texture_data=texture_data,
+            display_list_setup_header=display_list_setup_header,
+            vertex_store_setup_header=vertex_store_setup_header
         )
