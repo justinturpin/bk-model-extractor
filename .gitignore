@@ -6,3 +6,5 @@ roms
 *.png
 .pytest*
 __pycache__
+*.obj
+*.gltf

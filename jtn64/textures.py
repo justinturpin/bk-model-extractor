@@ -1,4 +1,13 @@
 from .util import BitReader
+from enum import IntEnum
+
+
+class TextureType(IntEnum):
+    CI4 = 1
+    CI8 = 2
+    RGBA16 = 4
+    RGBA32 = 8
+    IA8 = 16
 
 
 def iter_colors_rgb5a3(data, size):

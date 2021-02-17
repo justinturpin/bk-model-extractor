@@ -1,6 +1,7 @@
 import zlib
 import struct
 import click
+import io
 
 from pathlib import Path
 from PIL import Image
@@ -8,6 +9,26 @@ import jtn64
 from jtn64 import read_palette_rgb565, print_hex, BitReader, \
     iter_colors_rgb5a3, iter_colors_rgb565, iter_colors_rgb555a, \
     iter_colors_ia8, Model
+
+import pygltflib
+from pygltflib.validator import validate, summary
+
+
+class MinMaxTracker:
+    def __init__(self):
+        self.min = None
+        self.max = None
+
+    def add(self, v):
+        if not self.min:
+            self.min = v
+        elif v < self.min:
+            self.min = v
+
+        if not self.max:
+            self.max = v
+        elif v > self.max:
+            self.max = v
 
 
 def is_readable(t):
@@ -124,26 +145,168 @@ def dump_model_textures(path: str):
 @cli.command()
 @click.argument("path")
 def dump_model_displaylist(path: str):
-    model = Model.parse_bytes(Path(path).read_bytes())
+    path = Path(path)
+    model = Model.parse_bytes(path.read_bytes())
 
     print(f"Command count={model.display_list_setup_header.command_count}")
 
     tris = 0
 
     for command in model.display_list_setup_header.commands:
-        if command is jtn64.model.F3DCommand.G_TRI1:
+        # print(command)
+
+        if command is jtn64.F3DCommandType.G_TRI1:
             tris += 1
-        elif command is jtn64.model.F3DCommand.G_TRI2:
+        elif command is jtn64.F3DCommandType.G_TRI2:
             tris += 2
-        elif command is jtn64.model.F3DCommand.G_QUAD:
+        elif command is jtn64.F3DCommandType.G_QUAD:
             tris += 2
 
     print(f'tri commands={tris}')
     print(f'header tris={model.model_header.tri_count}, verts={model.model_header.vert_count}')
 
-    for vertex in model.vertex_store_setup_header.vertices:
-        print(vertex)
+    # print(f'vertex store segment={model.model_header.vertex_store_setup_offset}')
 
+    # for vertex in model.vertex_store_setup_header.vertices:
+    #     print(vertex)
+
+    vertex_io = io.BytesIO()
+    triangle_io = io.BytesIO()
+
+    vertex_count = 0
+    triangle_count = 0
+
+    triangle_minmax = MinMaxTracker()
+    vertex_minmax = MinMaxTracker()
+    color_minmax = MinMaxTracker()
+
+    for vertex in model.vertex_store_setup_header.vertices:
+        position = (
+            vertex.position[0] / 10,
+            vertex.position[1] / 10,
+            vertex.position[2] / 10
+        )
+
+        color = (
+            vertex.rgb_or_norm[0],
+            vertex.rgb_or_norm[1],
+            vertex.rgb_or_norm[2],
+        )
+
+        vertex_io.write(struct.pack("fff", *position))
+        vertex_io.write(struct.pack("BBBB", 0, *color))
+
+        vertex_minmax.add(position)
+        color_minmax.add(color)
+
+        vertex_count += 1
+
+    for face in model.simulate_displaylist():
+        triangle_io.write(struct.pack("HHH", *face))
+
+        triangle_minmax.add(face[0])
+        triangle_minmax.add(face[1])
+        triangle_minmax.add(face[2])
+
+        triangle_count += 3
+
+    gltf = pygltflib.GLTF2(
+        scene=0,
+        scenes=[pygltflib.Scene(nodes=[0])],
+        nodes=[pygltflib.Node(mesh=0)],
+        meshes=[
+            pygltflib.Mesh(
+                primitives=[
+                    pygltflib.Primitive(
+                        attributes=pygltflib.Attributes(POSITION=1, COLOR_0=2),
+                        indices=0
+                    )
+                ]
+            )
+        ],
+        accessors=[
+            pygltflib.Accessor(
+                bufferView=0,
+                componentType=pygltflib.UNSIGNED_SHORT,
+                count=triangle_count,
+                type=pygltflib.SCALAR,
+                max=[triangle_minmax.max],
+                min=[triangle_minmax.min],
+            ),
+            pygltflib.Accessor(
+                bufferView=1,
+                componentType=pygltflib.FLOAT,
+                count=vertex_count,
+                type=pygltflib.VEC3,
+                max=list(vertex_minmax.max),
+                min=list(vertex_minmax.min),
+            ),
+            pygltflib.Accessor(
+                bufferView=1,
+                componentType=pygltflib.UNSIGNED_BYTE,
+                normalized=True,
+                count=vertex_count,
+                type=pygltflib.VEC3,
+                byteOffset=13,
+                max=list(color_minmax.max),
+                min=list(color_minmax.min),
+            ),
+        ],
+        bufferViews=[
+            pygltflib.BufferView(
+                buffer=0,
+                byteLength=len(triangle_io.getvalue()),
+                target=pygltflib.ELEMENT_ARRAY_BUFFER,
+            ),
+            pygltflib.BufferView(
+                buffer=0,
+                byteOffset=len(triangle_io.getvalue()),
+                byteLength=len(vertex_io.getvalue()),
+                byteStride=16,
+                target=pygltflib.ARRAY_BUFFER,
+            ),
+        ],
+        buffers=[
+            pygltflib.Buffer(
+                byteLength=len(triangle_io.getvalue()) + len(vertex_io.getvalue())
+            )
+        ],
+    )
+
+    gltf.set_binary_blob(triangle_io.getvalue() + vertex_io.getvalue())
+
+    validate(gltf)
+
+    Path("test.gltf").write_bytes(
+        b"".join(gltf.save_to_bytes())
+    )
+
+    # with Path("test.obj").open("w") as f:
+    #     for vertex in model.vertex_store_setup_header.vertices:
+    #         f.write(f"v {vertex.position[0] / 100} {vertex.position[1] / 100} {vertex.position[2] / 100}\n")
+
+    #     faces = model.simulate_displaylist()
+
+    #     for face in faces:
+    #         f.write(f"f {face[0] + 1} {face[1] + 1} {face[2] + 1}\n")
+
+
+@cli.command()
+def convert_all_models():
+    for path in Path("models").glob("*.bin"):
+        model = Model.parse_bytes(path.read_bytes())
+
+        new_path = Path(f"objs/{path.stem}.obj")
+        new_path.parent.mkdir(exist_ok=True)
+
+        with new_path.open("w") as f:
+            for vertex in model.vertex_store_setup_header.vertices:
+                f.write(f"v {vertex.position[0] / 100} {vertex.position[1] / 100} {vertex.position[2] / 100}\n")
+
+            faces = model.simulate_displaylist()
+
+            for face in faces:
+                f.write(f"f {face[0] + 1} {face[1] + 1} {face[2] + 1}\n")
 
 if __name__ == "__main__":
     cli()

@@ -1,69 +1,11 @@
 from dataclasses import dataclass
-from enum import IntEnum
 from struct import unpack
 from typing import List, Tuple
 from . import textures
-from .util import BitReader
-
-
-class TextureType(IntEnum):
-    CI4 = 1
-    CI8 = 2
-    RGBA16 = 4
-    IA8 = 16
-
-
-class F3DCommand(IntEnum):
-    G_SPNOOP = 0x00
-    G_MTX = 0x01
-    G_VTX = 0x04
-    G_DL = 0x06
-    G_LOAD_UCODE = 0xAF
-    G_SetOtherMode_H = 0xBA
-    G_TRI2 = 0xB1
-    G_TRI1 = 0xBF
-    G_QUAD = 0xB5
-    G_CLEARGEOMETRYMODE = 0xB6
-    G_SETGEOMETRYMODE = 0xB7
-    G_ENDDL = 0xB8
-    G_TEXTURE = 0xBB
-    G_POPMTX = 0xBD
-    G_RDPLOADSYNC = 0xE6
-    G_RDPPIPESYNC = 0xE7
-    G_LOADTLUT = 0xF0
-    G_SETTILESIZE = 0xF2
-    G_LOADBLOCK = 0xF3
-    G_SETCOMBINE = 0xFC
-    G_SETTIMG = 0xFD
-    G_SETTILE = 0xF5
-
-
-@dataclass
-class Vertex:
-    position: Tuple[int, int, int]
-    flag: int
-    uv: Tuple[int, int]
-    rgb_or_norm: Tuple[int, int, int]
-    alpha: int
-
-    @classmethod
-    def from_bytes(cls: 'Vertex', data: bytes) -> 'Vertex':
-        p_x, p_y, p_z, \
-            flag, \
-            uv_x, uv_y, \
-            r, g, b, \
-            alpha = unpack(
-                ">hhhHhhBBBB",
-                data
-            )
-
-        return Vertex(
-            position=(p_x, p_y, p_z),
-            flag=flag,
-            uv=(uv_x, uv_y),
-            rgb_or_norm=(r, g, b),
-            alpha=alpha
-        )
+from .util import BitReader, print_hex
+from .f3d import Vertex, F3DCommandType, F3DCommandGVtx, F3DCommandGTri1, \
+    F3DCommandGTri2
+from .textures import TextureType
 
 
 @dataclass
@@ -102,6 +44,8 @@ class TextureSubHeader:
             texture_data_length = (2 * 2**8) + (width * height)
         elif texture_type is TextureType.RGBA16:
             texture_data_length = width * height * 2
+        elif texture_type is TextureType.RGBA32:
+            texture_data_length = width * height * 4
         elif texture_type is TextureType.IA8:
             texture_data_length = width * height
 
@@ -177,7 +121,7 @@ class TextureData:
 @dataclass
 class DisplayListSetupHeader:
     command_count: int
-    commands: List[F3DCommand]
+    commands: list
 
     @classmethod
     def parse_bytes(cls: 'DisplayListSetupHeader', data: bytes) -> 'DisplayListSetupHeader':
@@ -187,7 +131,44 @@ class DisplayListSetupHeader:
         for i in range(command_count):
             command_data = data[i*8 + 8:i*8 + 16]
 
-            commands.append(F3DCommand(command_data[0]))
+            command_type = F3DCommandType(command_data[0])
+
+            if command_type is F3DCommandType.G_VTX:
+                # [II] [xx xx] [SS SS SS SS]
+                write_start, \
+                    vert_len, \
+                    load_address = unpack(">BHI", command_data[1:])
+
+                verts_to_write = vert_len >> 10
+                vert_data_len = vert_len & 0b0000001111111111
+
+                commands.append(
+                    F3DCommandGVtx(
+                        write_start=write_start,
+                        verts_to_write=verts_to_write,
+                        vert_data_len=vert_data_len,
+                        load_address=load_address
+                    )
+                )
+            elif command_type is F3DCommandType.G_TRI1:
+                commands.append(
+                    F3DCommandGTri1(
+                        vertex_1=command_data[5] // 2,
+                        vertex_2=command_data[6] // 2,
+                        vertex_3=command_data[7] // 2,
+                    )
+                )
+            elif command_type is F3DCommandType.G_TRI2:
+                commands.append(
+                    F3DCommandGTri2(
+                        vertex_1=command_data[1] // 2,
+                        vertex_2=command_data[2] // 2,
+                        vertex_3=command_data[3] // 2,
+                        vertex_4=command_data[5] // 2,
+                        vertex_5=command_data[6] // 2,
+                        vertex_6=command_data[7] // 2,
+                    )
+                )
 
         return DisplayListSetupHeader(
             command_count=command_count,
@@ -201,10 +182,15 @@ class VertexStoreSetupHeader:
 
     @classmethod
     def parse_bytes(cls: 'VertexStoreSetupHeader', data: bytes) -> 'VertexStoreSetupHeader':
-        vertex_count_doubled = unpack(">H", data[0x16:0x18])[0]
+        offset = 6 + 6 + 4 + 2 + 2
+        print_hex(data[offset:offset + 2])
+
+        vertex_count_doubled = unpack(">H", data[offset:offset + 2])[0]
         vertices = []
 
-        for i in range(vertex_count_doubled // 2):
+        print(f"vertex count doubled={vertex_count_doubled}")
+
+        for i in range(vertex_count_doubled):
             start_offset = 0x18 + i * 16
             end_offset = start_offset + 16
 
@@ -301,3 +287,36 @@ class Model:
             display_list_setup_header=display_list_setup_header,
             vertex_store_setup_header=vertex_store_setup_header
         )
+
+    def simulate_displaylist(self):
+        vertex_index_buffer = [0] * 64
+        faces = []
+
+        for command in self.display_list_setup_header.commands:
+            if isinstance(command, F3DCommandGVtx):
+                segment_offset = command.load_address & 0xFFFFFF
+
+                index_offset = segment_offset // 16
+
+                for i in range(command.verts_to_write):
+                    vertex_index_buffer[command.write_start + i] = index_offset + i
+            elif isinstance(command, F3DCommandGTri1):
+                faces.append((
+                    vertex_index_buffer[command.vertex_1],
+                    vertex_index_buffer[command.vertex_2],
+                    vertex_index_buffer[command.vertex_3],
+                ))
+            elif isinstance(command, F3DCommandGTri2):
+                faces.append((
+                    vertex_index_buffer[command.vertex_1],
+                    vertex_index_buffer[command.vertex_2],
+                    vertex_index_buffer[command.vertex_3],
+                ))
+
+                faces.append((
+                    vertex_index_buffer[command.vertex_4],
+                    vertex_index_buffer[command.vertex_5],
+                    vertex_index_buffer[command.vertex_6],
+                ))
+
+        return faces
