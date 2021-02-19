@@ -1,10 +1,13 @@
+import PIL
+
 from dataclasses import dataclass
 from struct import unpack
 from typing import List, Tuple
 from . import textures
-from .util import BitReader, print_hex
+from .util import BitReader, print_hex, print_bin
 from .f3d import Vertex, F3DCommandType, F3DCommandGVtx, F3DCommandGTri1, \
-    F3DCommandGTri2
+    F3DCommandGTri2, F3DCommandGTexture, F3DCommandSetTImg, \
+    F3DCommandSetTImgTextureFormat
 from .textures import TextureType
 
 
@@ -100,12 +103,23 @@ class TextureData:
         if self.texture_type is TextureType.CI4:
             palette = textures.read_palette_rgb565(self.data)
 
+            image = PIL.Image.new('RGBA', (16, 1))
+
+            for i, color in enumerate(palette):
+                print_bin(color)
+
+                image.putpixel((i, 0), color)
+
+            image.save(f"palette_{self.width}x{self.height}.png")
+
             # Palette is 16 bits (2 bytes) per pixel, and there are 16
             # colors since its a 4 bit palette, so image data starts at 32
             reader = BitReader(self.data[16*2:])
 
             for i in range(self.width * self.height):
-                result.append(palette[reader.read_sub(4)])
+                color_index = reader.read_sub(4)
+
+                result.append(palette[color_index])
         elif self.texture_type is TextureType.RGBA16:
             reader = BitReader(self.data)
 
@@ -116,6 +130,17 @@ class TextureData:
                 result.append(color)
 
         return result
+
+    def to_image(self) -> PIL.Image:
+        image = PIL.Image.new('RGBA', (self.width, self.height))
+
+        for p, color in enumerate(self.to_rgba()):
+            y = self.height - (p // self.width) - 1
+            x = p % self.width
+
+            image.putpixel((x, y), color)
+
+        return image
 
 
 @dataclass
@@ -169,6 +194,32 @@ class DisplayListSetupHeader:
                         vertex_6=command_data[7] // 2,
                     )
                 )
+            elif command_type is F3DCommandType.G_TEXTURE:
+                s, t = unpack(">HH", command_data[4:8])
+
+                commands.append(
+                    F3DCommandGTexture(
+                        scaling_factor_s=s / 2**16,
+                        scaling_factor_t=t / 2**16,
+                    )
+                )
+            elif command_type is F3DCommandType.G_SETTIMG:
+                format_size = command_data[1]
+
+                texture_format = F3DCommandSetTImgTextureFormat(
+                    format_size >> 5
+                )
+                texture_bit_size = (format_size >> 3) & 0b11
+
+                segment_address = unpack(">I", command_data[4:8])[0]
+
+                commands.append(
+                    F3DCommandSetTImg(
+                        texture_segment_address=segment_address,
+                        texture_bit_size=texture_bit_size,
+                        texture_format=texture_format,
+                    )
+                )
 
         return DisplayListSetupHeader(
             command_count=command_count,
@@ -183,12 +234,9 @@ class VertexStoreSetupHeader:
     @classmethod
     def parse_bytes(cls: 'VertexStoreSetupHeader', data: bytes) -> 'VertexStoreSetupHeader':
         offset = 6 + 6 + 4 + 2 + 2
-        print_hex(data[offset:offset + 2])
 
         vertex_count_doubled = unpack(">H", data[offset:offset + 2])[0]
         vertices = []
-
-        print(f"vertex count doubled={vertex_count_doubled}")
 
         for i in range(vertex_count_doubled):
             start_offset = 0x18 + i * 16

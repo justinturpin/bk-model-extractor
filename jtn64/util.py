@@ -1,8 +1,23 @@
+import io
+from base64 import b64encode
+
+
 def print_hex(*data):
     output = []
 
     for d in data:
         r = [f"{x:02x}" for x in d]
+
+        output.append(" ".join(r))
+
+    print(" ".join(output))
+
+
+def print_bin(*data):
+    output = []
+
+    for d in data:
+        r = [f"{x:08b}" for x in d]
 
         output.append(" ".join(r))
 
@@ -49,3 +64,13 @@ class BitReader:
 
     def read_bits(self, bits):
         raise NotImplementedError
+
+
+def image_to_data_uri(image):
+    buffer = io.BytesIO()
+
+    image.save(buffer, "PNG")
+
+    encoded = b64encode(buffer.getvalue()).decode()
+
+    return f"data:image/png;base64,{encoded}"

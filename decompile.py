@@ -125,7 +125,7 @@ def dump_model_textures(path: str):
 
     for texture_num, texture in enumerate(model.texture_data):
         print(
-            f" texture_type={texture.texture_type},"
+            f" texture_type={texture.texture_type!s},"
             f" width={texture.width}, y={texture.height}"
         )
 
@@ -148,12 +148,15 @@ def dump_model_displaylist(path: str):
     path = Path(path)
     model = Model.parse_bytes(path.read_bytes())
 
+    print("--------------------------")
+    print("Model loaded")
+
     print(f"Command count={model.display_list_setup_header.command_count}")
 
     tris = 0
 
     for command in model.display_list_setup_header.commands:
-        # print(command)
+        print(command)
 
         if command is jtn64.F3DCommandType.G_TRI1:
             tris += 1
@@ -164,12 +167,16 @@ def dump_model_displaylist(path: str):
 
     print(f'tri commands={tris}')
     print(f'header tris={model.model_header.tri_count}, verts={model.model_header.vert_count}')
+    print(f'texture count={model.texture_setup_header.texture_count}')
 
     # print(f'vertex store segment={model.model_header.vertex_store_setup_offset}')
 
     # for vertex in model.vertex_store_setup_header.vertices:
     #     print(vertex)
 
+    images = []
+    textures = []
+    materials = []
     vertex_io = io.BytesIO()
     triangle_io = io.BytesIO()
 
@@ -179,6 +186,7 @@ def dump_model_displaylist(path: str):
     triangle_minmax = MinMaxTracker()
     vertex_minmax = MinMaxTracker()
     color_minmax = MinMaxTracker()
+    uv_minmax = MinMaxTracker()
 
     for vertex in model.vertex_store_setup_header.vertices:
         position = (
@@ -193,11 +201,18 @@ def dump_model_displaylist(path: str):
             vertex.rgb_or_norm[2],
         )
 
+        uv = (
+            float(vertex.uv[0]),
+            float(vertex.uv[1]),
+        )
+
         vertex_io.write(struct.pack("fff", *position))
         vertex_io.write(struct.pack("BBBB", 0, *color))
+        vertex_io.write(struct.pack("ff", *uv))
 
         vertex_minmax.add(position)
         color_minmax.add(color)
+        uv_minmax.add(uv)
 
         vertex_count += 1
 
@@ -210,6 +225,31 @@ def dump_model_displaylist(path: str):
 
         triangle_count += 3
 
+    for i, texture in enumerate(model.texture_data):
+        print(f"Texture {i}: {texture.width}x{texture.height}")
+
+        image = texture.to_image()
+
+        images.append(
+            pygltflib.Image(uri=jtn64.image_to_data_uri(image))
+        )
+
+        textures.append(
+            pygltflib.Texture(sampler=0, source=i)
+        )
+
+        materials.append(
+            pygltflib.Material(
+                pbrMetallicRoughness=pygltflib.PbrMetallicRoughness(
+                    baseColorTexture=pygltflib.TextureInfo(
+                        index=0
+                    ),
+                    metallicFactor=0.0
+                ),
+                name=f"texture_{i}"
+            )
+        )
+
     gltf = pygltflib.GLTF2(
         scene=0,
         scenes=[pygltflib.Scene(nodes=[0])],
@@ -218,8 +258,11 @@ def dump_model_displaylist(path: str):
             pygltflib.Mesh(
                 primitives=[
                     pygltflib.Primitive(
-                        attributes=pygltflib.Attributes(POSITION=1, COLOR_0=2),
-                        indices=0
+                        attributes=pygltflib.Attributes(
+                            POSITION=1, TEXCOORD_0=3, COLOR_0=2
+                        ),
+                        indices=0,
+                        material=0
                     )
                 ]
             )
@@ -251,6 +294,30 @@ def dump_model_displaylist(path: str):
                 max=list(color_minmax.max),
                 min=list(color_minmax.min),
             ),
+            pygltflib.Accessor(
+                bufferView=1,
+                componentType=pygltflib.FLOAT,
+                normalized=True,
+                count=vertex_count,
+                type=pygltflib.VEC2,
+                byteOffset=16,
+                max=list(uv_minmax.max),
+                min=list(uv_minmax.min),
+            ),
+        ],
+        # materials=[
+        #     # pygltflib.Material()
+        # ],
+        images=images,
+        textures=textures,
+        materials=materials,
+        samplers=[
+            pygltflib.Sampler(
+                magFilter=pygltflib.LINEAR,
+                minFilter=pygltflib.NEAREST_MIPMAP_LINEAR,
+                wrapS=pygltflib.REPEAT,
+                wrapT=pygltflib.REPEAT,
+            )
         ],
         bufferViews=[
             pygltflib.BufferView(
@@ -262,7 +329,7 @@ def dump_model_displaylist(path: str):
                 buffer=0,
                 byteOffset=len(triangle_io.getvalue()),
                 byteLength=len(vertex_io.getvalue()),
-                byteStride=16,
+                byteStride=24,
                 target=pygltflib.ARRAY_BUFFER,
             ),
         ],

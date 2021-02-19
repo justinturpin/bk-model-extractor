@@ -1,4 +1,4 @@
-from .util import BitReader, print_hex
+from .util import BitReader, print_hex, image_to_data_uri
 from .textures import read_palette_rgb565, read_palette_rgb565, \
     iter_colors_rgb565, iter_colors_rgb5a3, iter_colors_rgb555a, \
     iter_colors_ia8

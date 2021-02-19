@@ -23,10 +23,14 @@ class Vertex:
                 data
             )
 
+        # 128 is largely a magic number here. http://n64devkit.square7.ch/tutorial/graphics/3/3_4.htm
+        # suggests that I should be shifting them to the left 6 bits, which would
+        # be dividing by 64, but 128 looks correct. We don't know why.
+
         return Vertex(
             position=(p_x, p_y, p_z),
             flag=flag,
-            uv=(uv_x, uv_y),
+            uv=(uv_x / 128, uv_y / 128),
             rgb_or_norm=(r, g, b),
             alpha=alpha
         )
@@ -83,3 +87,24 @@ class F3DCommandGTri2:
     vertex_4: int
     vertex_5: int
     vertex_6: int
+
+
+@dataclass
+class F3DCommandGTexture:
+    scaling_factor_s: int
+    scaling_factor_t: int
+
+
+class F3DCommandSetTImgTextureFormat(IntEnum):
+    RGBA = 0
+    YUV = 1
+    CI = 2
+    IA = 3
+    I = 4
+
+
+@dataclass
+class F3DCommandSetTImg:
+    texture_segment_address: int
+    texture_format: F3DCommandSetTImgTextureFormat
+    texture_bit_size: int

@@ -33,13 +33,15 @@ def iter_colors_rgb5a3(data, size):
 
 
 def iter_colors_rgb565(data, size):
-    palette_reader = BitReader(data)
+    # Used for texture type 1 (CI4)
+
+    reader = BitReader(data)
 
     for _ in range(size):
-        red = palette_reader.read_sub(5) * 0x8
-        green1 = palette_reader.read_sub(3)
-        green2 = palette_reader.read_sub(3)
-        blue = palette_reader.read_sub(5) * 0x8
+        red = reader.read_sub(5) * 0x8
+        green1 = reader.read_sub(3)
+        green2 = reader.read_sub(3)
+        blue = reader.read_sub(5) * 0x8
 
         green = ((green1 << 3) | green2) * 0x4
 
@@ -47,14 +49,14 @@ def iter_colors_rgb565(data, size):
 
 
 def iter_colors_rgb555a(data, size):
-    palette_reader = BitReader(data)
+    reader = BitReader(data)
 
     for _ in range(size):
-        red = palette_reader.read_sub(5) * 0x8
-        green1 = palette_reader.read_sub(3)
-        green2 = palette_reader.read_sub(2)
-        blue = palette_reader.read_sub(5) * 0x8
-        alpha = palette_reader.read_sub(1) * 0xFF
+        red = reader.read_sub(5) * 0x8
+        green1 = reader.read_sub(3)
+        green2 = reader.read_sub(2)
+        blue = reader.read_sub(5) * 0x8
+        alpha = reader.read_sub(1) * 0xFF
 
         green = ((green1 << 2) | green2) * 0x8
 
@@ -83,6 +85,15 @@ def read_palette_rgb565(data):
     palette = []
 
     for color in iter_colors_rgb565(data, 16):
+        palette.append(color)
+
+    return palette
+
+
+def read_palette_rgb555a(data):
+    palette = []
+
+    for color in iter_colors_rgb555a(data, 16):
         palette.append(color)
 
     return palette
