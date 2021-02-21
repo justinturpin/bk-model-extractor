@@ -8,7 +8,7 @@ from struct import unpack
 class Vertex:
     position: Tuple[int, int, int]
     flag: int
-    uv: Tuple[int, int]
+    uv: List[int]
     rgb_or_norm: Tuple[int, int, int]
     alpha: int
 
@@ -30,7 +30,7 @@ class Vertex:
         return Vertex(
             position=(p_x, p_y, p_z),
             flag=flag,
-            uv=(uv_x / 128, uv_y / 128),
+            uv=[uv_x / 2**12, uv_y / 2**12],
             rgb_or_norm=(r, g, b),
             alpha=alpha
         )

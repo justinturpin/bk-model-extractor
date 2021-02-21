@@ -1,4 +1,4 @@
-from jtn64 import Model, ModelHeader
+from jtn64 import Model, ModelHeader, TextureSetupHeader, TextureSubHeader
 from struct import pack
 from pathlib import Path
 
@@ -44,3 +44,62 @@ def test_parse_model_real():
     )
 
     print(model.texture_setup_header)
+
+
+def test_texture_find_offset():
+    header_1 = TextureSetupHeader(
+        data_length=0,
+        texture_count=2,
+        texture_sub_headers=[
+            TextureSubHeader(
+                segment_address_offset=0x0,
+                texture_type=1,
+                width=32,
+                height=32,
+                texture_data_length=32*32*2
+            ),
+            TextureSubHeader(
+                segment_address_offset=0x80,
+                texture_type=1,
+                width=32,
+                height=32,
+                texture_data_length=32*32*2
+            ),
+            TextureSubHeader(
+                segment_address_offset=0xD0,
+                texture_type=1,
+                width=32,
+                height=32,
+                texture_data_length=32*32*2
+            )
+        ]
+    )
+
+    assert header_1.find_nearest_texture(0x0) == 0
+    assert header_1.find_nearest_texture(0x10) == 0
+    assert header_1.find_nearest_texture(0x40) == 0
+
+    assert header_1.find_nearest_texture(0x80) == 1
+    assert header_1.find_nearest_texture(0x90) == 1
+    assert header_1.find_nearest_texture(0xA0) == 1
+
+    assert header_1.find_nearest_texture(0xD0) == 2
+    assert header_1.find_nearest_texture(0xD1) == 2
+    assert header_1.find_nearest_texture(0xD2) == 2
+
+    header_2 = TextureSetupHeader(
+        data_length=0,
+        texture_count=2,
+        texture_sub_headers=[
+            TextureSubHeader(
+                segment_address_offset=0x0,
+                texture_type=1,
+                width=32,
+                height=32,
+                texture_data_length=32*32*2
+            ),
+        ]
+    )
+
+    assert header_2.find_nearest_texture(0x0) == 0
+    assert header_2.find_nearest_texture(0x10) == 0

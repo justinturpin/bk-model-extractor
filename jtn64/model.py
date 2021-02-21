@@ -1,5 +1,5 @@
-import PIL
 
+from PIL import Image
 from dataclasses import dataclass
 from struct import unpack
 from typing import List, Tuple
@@ -9,6 +9,7 @@ from .f3d import Vertex, F3DCommandType, F3DCommandGVtx, F3DCommandGTri1, \
     F3DCommandGTri2, F3DCommandGTexture, F3DCommandSetTImg, \
     F3DCommandSetTImgTextureFormat
 from .textures import TextureType
+from .mesh import Mesh
 
 
 @dataclass
@@ -83,11 +84,26 @@ class TextureSetupHeader:
                 TextureSubHeader.parse_bytes(texture_sub_header_data)
             )
 
+        texture_sub_headers.sort(key=lambda x: x.segment_address_offset)
+
         return TextureSetupHeader(
             data_length=data_length,
             texture_count=texture_count,
             texture_sub_headers=texture_sub_headers
         )
+
+    def find_nearest_texture(self, segment_address: int):
+        # TODO: this could be a binary search and make Google interviwers happy.
+
+        nearest = None
+
+        for i, texture in enumerate(self.texture_sub_headers):
+            if texture.segment_address_offset <= segment_address:
+                nearest = i
+            else:
+                break
+
+        return nearest
 
 
 @dataclass
@@ -103,14 +119,14 @@ class TextureData:
         if self.texture_type is TextureType.CI4:
             palette = textures.read_palette_rgb565(self.data)
 
-            image = PIL.Image.new('RGBA', (16, 1))
+            # image = Image.new('RGBA', (16, 1))
 
-            for i, color in enumerate(palette):
-                print_bin(color)
+            # for i, color in enumerate(palette):
+            #     print_bin(color)
 
-                image.putpixel((i, 0), color)
+            #     image.putpixel((i, 0), color)
 
-            image.save(f"palette_{self.width}x{self.height}.png")
+            # image.save(f"palette_{self.width}x{self.height}.png")
 
             # Palette is 16 bits (2 bytes) per pixel, and there are 16
             # colors since its a 4 bit palette, so image data starts at 32
@@ -131,8 +147,8 @@ class TextureData:
 
         return result
 
-    def to_image(self) -> PIL.Image:
-        image = PIL.Image.new('RGBA', (self.width, self.height))
+    def to_image(self) -> Image:
+        image = Image.new('RGBA', (self.width, self.height))
 
         for p, color in enumerate(self.to_rgba()):
             y = self.height - (p // self.width) - 1
@@ -337,8 +353,23 @@ class Model:
         )
 
     def simulate_displaylist(self):
+        meshes = {}
         vertex_index_buffer = [0] * 64
-        faces = []
+
+        scaling_factor_s = 1.0
+        scaling_factor_t = 1.0
+        indices = None
+
+        touched_vertices = set()
+
+        def _scale_vertex_uv(index):
+            if index not in touched_vertices:
+                print(f"scaling vertex {index} by {scaling_factor_s}x{scaling_factor_t}")
+
+                self.vertex_store_setup_header.vertices[index].uv[0] *= 0.001
+                self.vertex_store_setup_header.vertices[index].uv[1] *= 0.001
+
+                touched_vertices.add(index)
 
         for command in self.display_list_setup_header.commands:
             if isinstance(command, F3DCommandGVtx):
@@ -349,22 +380,65 @@ class Model:
                 for i in range(command.verts_to_write):
                     vertex_index_buffer[command.write_start + i] = index_offset + i
             elif isinstance(command, F3DCommandGTri1):
-                faces.append((
-                    vertex_index_buffer[command.vertex_1],
-                    vertex_index_buffer[command.vertex_2],
-                    vertex_index_buffer[command.vertex_3],
-                ))
-            elif isinstance(command, F3DCommandGTri2):
-                faces.append((
+                indices.append((
                     vertex_index_buffer[command.vertex_1],
                     vertex_index_buffer[command.vertex_2],
                     vertex_index_buffer[command.vertex_3],
                 ))
 
-                faces.append((
+                _scale_vertex_uv(command.vertex_1)
+                _scale_vertex_uv(command.vertex_2)
+                _scale_vertex_uv(command.vertex_3)
+
+            elif isinstance(command, F3DCommandGTri2):
+                indices.append((
+                    vertex_index_buffer[command.vertex_1],
+                    vertex_index_buffer[command.vertex_2],
+                    vertex_index_buffer[command.vertex_3],
+                ))
+
+                indices.append((
                     vertex_index_buffer[command.vertex_4],
                     vertex_index_buffer[command.vertex_5],
                     vertex_index_buffer[command.vertex_6],
                 ))
 
-        return faces
+                _scale_vertex_uv(command.vertex_1)
+                _scale_vertex_uv(command.vertex_2)
+                _scale_vertex_uv(command.vertex_3)
+                _scale_vertex_uv(command.vertex_4)
+                _scale_vertex_uv(command.vertex_5)
+                _scale_vertex_uv(command.vertex_6)
+
+            elif isinstance(command, F3DCommandSetTImg):
+                texture_offset = command.texture_segment_address - 0x02000000
+                texture_index = self.texture_setup_header.find_nearest_texture(texture_offset)
+
+                if texture_index in meshes:
+                    current_mesh = meshes[texture_index]
+
+                    indices = current_mesh.indices
+                else:
+                    indices = []
+
+                    current_mesh = Mesh(
+                        texture_index=texture_index,
+                        scale_s=1.0,
+                        scale_t=1.0,
+                        indices=indices,
+                        vertices=[]
+                    )
+
+                    meshes[texture_index] = current_mesh
+
+                print(
+                    f"SETTIMG: texture_address={command.texture_segment_address:0x},"
+                    f" texture_format={command.texture_format!s}"
+                    f" texture_bit_size={command.texture_bit_size}"
+                    f" guessed_index={texture_index}"
+                )
+            elif isinstance(command, F3DCommandGTexture):
+                scaling_factor_s = command.scaling_factor_s
+                scaling_factor_t = command.scaling_factor_t
+
+        return list(meshes.values())
