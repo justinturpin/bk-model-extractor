@@ -11,7 +11,6 @@ from jtn64 import read_palette_rgb565, print_hex, BitReader, \
     iter_colors_ia8, Model
 
 import pygltflib
-from pygltflib.validator import validate, summary
 
 
 class MinMaxTracker:
@@ -20,12 +19,12 @@ class MinMaxTracker:
         self.max = None
 
     def add(self, v):
-        if not self.min:
+        if self.min is None:
             self.min = v
         elif v < self.min:
             self.min = v
 
-        if not self.max:
+        if self.max is None:
             self.max = v
         elif v > self.max:
             self.max = v
@@ -150,7 +149,6 @@ def dump_model_displaylist(path: str):
 
     print("--------------------------")
     print("Model loaded")
-
     print(f"Command count={model.display_list_setup_header.command_count}")
 
     tris = 0
@@ -173,37 +171,43 @@ def dump_model_displaylist(path: str):
     textures = []
     materials = []
     nodes = []
+    scene_nodes = []
+    accessors = []
 
     vertex_io = io.BytesIO()
     triangle_io = io.BytesIO()
 
     vertex_count = 0
-    triangle_count = 0
 
-    triangle_minmax = MinMaxTracker()
     vertex_minmax = MinMaxTracker()
     color_minmax = MinMaxTracker()
     uv_minmax = MinMaxTracker()
 
     model_meshes = model.simulate_displaylist()
     gltf_meshes = []
-    buffer_views = []
 
-    byte_offset = 0
+    position_accessor_index = len(model_meshes)
+    color_accessor_index = len(model_meshes) + 1
+    uv_accessor_index = len(model_meshes) + 2
 
-    for mesh in model_meshes:
-        byte_length = 0
+    for mesh_index, mesh in enumerate(model_meshes):
+        triangle_minmax = MinMaxTracker()
+        byte_offset = len(triangle_io.getvalue())
 
         print(f'Mesh: texture_index={mesh.texture_index}, tri_count={len(mesh.indices)}')
+
+        scene_nodes.append(mesh_index)
 
         gltf_meshes.append(
             pygltflib.Mesh(
                 primitives=[
                     pygltflib.Primitive(
                         attributes=pygltflib.Attributes(
-                            POSITION=1, TEXCOORD_0=3, COLOR_0=2
+                            POSITION=position_accessor_index,
+                            COLOR_0=color_accessor_index,
+                            TEXCOORD_0=uv_accessor_index,
                         ),
-                        indices=0,
+                        indices=mesh_index,
                         material=mesh.texture_index
                     )
                 ]
@@ -212,38 +216,37 @@ def dump_model_displaylist(path: str):
 
         nodes.append(
             pygltflib.Node(
-                mesh=mesh.texture_index,
-                name=f"mesh_{mesh.texture_index}"
+                mesh=mesh_index,
+                name=f"mesh_{mesh_index}"
             )
         )
 
-        for face in mesh.indices:
+        for face_index, face in enumerate(mesh.indices):
             triangle_io.write(struct.pack("HHH", *face))
 
             triangle_minmax.add(face[0])
             triangle_minmax.add(face[1])
             triangle_minmax.add(face[2])
 
-            triangle_count += 3
+        print(f"    byte_offset={byte_offset}")
 
-            byte_length += 6
-
-        buffer_views.append(
-            pygltflib.BufferView(
-                buffer=0,
+        accessors.append(
+            pygltflib.Accessor(
+                bufferView=0,
+                componentType=pygltflib.UNSIGNED_SHORT,
                 byteOffset=byte_offset,
-                byteLength=byte_length,
-                target=pygltflib.ELEMENT_ARRAY_BUFFER,
-            ),
+                count=len(mesh.indices)*3,
+                type=pygltflib.SCALAR,
+                max=[triangle_minmax.max],
+                min=[triangle_minmax.min],
+            )
         )
 
-        byte_offset = len(triangle_io.getvalue())
-
-    for vertex in model.vertex_store_setup_header.vertices:
+    for vertex_index, vertex in enumerate(model.vertex_store_setup_header.vertices):
         position = (
-            vertex.position[0] / 10,
-            vertex.position[1] / 10,
-            vertex.position[2] / 10
+            vertex.position[0] / 128,
+            vertex.position[1] / 128,
+            vertex.position[2] / 128
         )
 
         color = (
@@ -267,15 +270,38 @@ def dump_model_displaylist(path: str):
 
         vertex_count += 1
 
-    buffer_views.append(
-        pygltflib.BufferView(
-            buffer=0,
-            byteOffset=len(triangle_io.getvalue()),
-            byteLength=len(vertex_io.getvalue()),
-            byteStride=24,
-            target=pygltflib.ARRAY_BUFFER,
+    # Add the vertex accessors (position, color, then UV)
+
+    accessors += [
+        pygltflib.Accessor(
+            bufferView=1,
+            componentType=pygltflib.FLOAT,
+            count=vertex_count,
+            type=pygltflib.VEC3,
+            max=list(vertex_minmax.max),
+            min=list(vertex_minmax.min),
         ),
-    )
+        pygltflib.Accessor(
+            bufferView=1,
+            componentType=pygltflib.UNSIGNED_BYTE,
+            normalized=True,
+            count=vertex_count,
+            type=pygltflib.VEC3,
+            byteOffset=13,
+            max=list(color_minmax.max),
+            min=list(color_minmax.min),
+        ),
+        pygltflib.Accessor(
+            bufferView=1,
+            componentType=pygltflib.FLOAT,
+            normalized=True,
+            count=vertex_count,
+            type=pygltflib.VEC2,
+            byteOffset=16,
+            max=list(uv_minmax.max),
+            min=list(uv_minmax.min),
+        ),
+    ]
 
     for i, texture in enumerate(model.texture_data):
         print(f"Texture {i}: {texture.width}x{texture.height}")
@@ -302,47 +328,10 @@ def dump_model_displaylist(path: str):
 
     gltf = pygltflib.GLTF2(
         scene=0,
-        scenes=[pygltflib.Scene(nodes=[0])],
+        scenes=[pygltflib.Scene(nodes=scene_nodes)],
         nodes=nodes,
         meshes=gltf_meshes,
-        accessors=[
-            pygltflib.Accessor(
-                bufferView=0,
-                componentType=pygltflib.UNSIGNED_SHORT,
-                count=triangle_count,
-                type=pygltflib.SCALAR,
-                max=[triangle_minmax.max],
-                min=[triangle_minmax.min],
-            ),
-            pygltflib.Accessor(
-                bufferView=1,
-                componentType=pygltflib.FLOAT,
-                count=vertex_count,
-                type=pygltflib.VEC3,
-                max=list(vertex_minmax.max),
-                min=list(vertex_minmax.min),
-            ),
-            pygltflib.Accessor(
-                bufferView=1,
-                componentType=pygltflib.UNSIGNED_BYTE,
-                normalized=True,
-                count=vertex_count,
-                type=pygltflib.VEC3,
-                byteOffset=13,
-                max=list(color_minmax.max),
-                min=list(color_minmax.min),
-            ),
-            pygltflib.Accessor(
-                bufferView=1,
-                componentType=pygltflib.FLOAT,
-                normalized=True,
-                count=vertex_count,
-                type=pygltflib.VEC2,
-                byteOffset=16,
-                max=list(uv_minmax.max),
-                min=list(uv_minmax.min),
-            ),
-        ],
+        accessors=accessors,
         images=images,
         textures=textures,
         materials=materials,
@@ -354,7 +343,21 @@ def dump_model_displaylist(path: str):
                 wrapT=pygltflib.REPEAT,
             )
         ],
-        bufferViews=buffer_views,
+        bufferViews=[
+            pygltflib.BufferView(
+                buffer=0,
+                byteOffset=0,
+                byteLength=len(triangle_io.getvalue()),
+                target=pygltflib.ELEMENT_ARRAY_BUFFER,
+            ),
+            pygltflib.BufferView(
+                buffer=0,
+                byteOffset=len(triangle_io.getvalue()),
+                byteLength=len(vertex_io.getvalue()),
+                byteStride=24,
+                target=pygltflib.ARRAY_BUFFER,
+            ),
+        ],
         buffers=[
             pygltflib.Buffer(
                 byteLength=len(triangle_io.getvalue()) + len(vertex_io.getvalue())

@@ -117,16 +117,10 @@ class TextureData:
         result = []
 
         if self.texture_type is TextureType.CI4:
-            palette = textures.read_palette_rgb565(self.data)
-
-            # image = Image.new('RGBA', (16, 1))
-
-            # for i, color in enumerate(palette):
-            #     print_bin(color)
-
-            #     image.putpixel((i, 0), color)
-
-            # image.save(f"palette_{self.width}x{self.height}.png")
+            # TODO: you need information from the display list in order
+            # to tell if this is 565 or 555a
+            # palette = textures.read_palette_rgb565(self.data)
+            palette = textures.read_palette_rgb555a(self.data)
 
             # Palette is 16 bits (2 bytes) per pixel, and there are 16
             # colors since its a 4 bit palette, so image data starts at 32
@@ -151,7 +145,8 @@ class TextureData:
         image = Image.new('RGBA', (self.width, self.height))
 
         for p, color in enumerate(self.to_rgba()):
-            y = self.height - (p // self.width) - 1
+            # y = self.height - (p // self.width) - 1
+            y = p // self.width
             x = p % self.width
 
             image.putpixel((x, y), color)
@@ -364,10 +359,10 @@ class Model:
 
         def _scale_vertex_uv(index):
             if index not in touched_vertices:
-                print(f"scaling vertex {index} by {scaling_factor_s}x{scaling_factor_t}")
+                # print(f"scaling vertex {index} by {scaling_factor_s}x{scaling_factor_t}")
 
-                self.vertex_store_setup_header.vertices[index].uv[0] *= 0.001
-                self.vertex_store_setup_header.vertices[index].uv[1] *= 0.001
+                self.vertex_store_setup_header.vertices[index].uv[0] *= scaling_factor_s
+                self.vertex_store_setup_header.vertices[index].uv[1] *= scaling_factor_t
 
                 touched_vertices.add(index)
 
@@ -431,12 +426,6 @@ class Model:
 
                     meshes[texture_index] = current_mesh
 
-                print(
-                    f"SETTIMG: texture_address={command.texture_segment_address:0x},"
-                    f" texture_format={command.texture_format!s}"
-                    f" texture_bit_size={command.texture_bit_size}"
-                    f" guessed_index={texture_index}"
-                )
             elif isinstance(command, F3DCommandGTexture):
                 scaling_factor_s = command.scaling_factor_s
                 scaling_factor_t = command.scaling_factor_t
