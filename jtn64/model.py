@@ -264,6 +264,10 @@ class VertexStoreSetupHeader:
 
 @dataclass
 class Model:
+    """
+    Represents the whole 3D Model.
+    """
+
     model_header: ModelHeader
 
     texture_setup_header: TextureSetupHeader
@@ -347,15 +351,26 @@ class Model:
             vertex_store_setup_header=vertex_store_setup_header
         )
 
-    def simulate_displaylist(self):
-        meshes = {}
+    def simulate_displaylist(self) -> List[Mesh]:
+        """
+        Walk through the display list and render a list of Meshes.
+        """
+
+        meshes = []
         vertex_index_buffer = [0] * 64
 
         scaling_factor_s = 1.0
         scaling_factor_t = 1.0
-        indices = None
 
         touched_vertices = set()
+
+        current_mesh = Mesh(
+            texture_index=None,
+            scale_s=1.0,
+            scale_t=1.0,
+            indices=[],
+            vertices=[]
+        )
 
         def _scale_vertex_uv(index):
             if index not in touched_vertices:
@@ -368,6 +383,8 @@ class Model:
 
         for command in self.display_list_setup_header.commands:
             if isinstance(command, F3DCommandGVtx):
+                # G_VTX
+
                 segment_offset = command.load_address & 0xFFFFFF
 
                 index_offset = segment_offset // 16
@@ -375,7 +392,9 @@ class Model:
                 for i in range(command.verts_to_write):
                     vertex_index_buffer[command.write_start + i] = index_offset + i
             elif isinstance(command, F3DCommandGTri1):
-                indices.append((
+                # G_TRI1
+
+                current_mesh.indices.append((
                     vertex_index_buffer[command.vertex_1],
                     vertex_index_buffer[command.vertex_2],
                     vertex_index_buffer[command.vertex_3],
@@ -386,13 +405,15 @@ class Model:
                 _scale_vertex_uv(command.vertex_3)
 
             elif isinstance(command, F3DCommandGTri2):
-                indices.append((
+                # G_TRI2
+
+                current_mesh.indices.append((
                     vertex_index_buffer[command.vertex_1],
                     vertex_index_buffer[command.vertex_2],
                     vertex_index_buffer[command.vertex_3],
                 ))
 
-                indices.append((
+                current_mesh.indices.append((
                     vertex_index_buffer[command.vertex_4],
                     vertex_index_buffer[command.vertex_5],
                     vertex_index_buffer[command.vertex_6],
@@ -406,28 +427,30 @@ class Model:
                 _scale_vertex_uv(command.vertex_6)
 
             elif isinstance(command, F3DCommandSetTImg):
+                # G_SETTIMG (Set texture image)
+
+                # Every time we hit a SETTIMG, just start a new mesh.
+
                 texture_offset = command.texture_segment_address - 0x02000000
                 texture_index = self.texture_setup_header.find_nearest_texture(texture_offset)
 
-                if texture_index in meshes:
-                    current_mesh = meshes[texture_index]
-
-                    indices = current_mesh.indices
-                else:
-                    indices = []
+                if texture_index != current_mesh.texture_index:
+                    if current_mesh.indices:
+                        meshes.append(current_mesh)
 
                     current_mesh = Mesh(
                         texture_index=texture_index,
                         scale_s=1.0,
                         scale_t=1.0,
-                        indices=indices,
+                        indices=[],
                         vertices=[]
                     )
-
-                    meshes[texture_index] = current_mesh
 
             elif isinstance(command, F3DCommandGTexture):
                 scaling_factor_s = command.scaling_factor_s
                 scaling_factor_t = command.scaling_factor_t
 
-        return list(meshes.values())
+        if current_mesh and current_mesh.indices:
+            meshes.append(current_mesh)
+
+        return meshes

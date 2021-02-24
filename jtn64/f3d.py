@@ -23,9 +23,9 @@ class Vertex:
                 data
             )
 
-        # 128 is largely a magic number here. http://n64devkit.square7.ch/tutorial/graphics/3/3_4.htm
+        # 2**12 is largely a magic number here. http://n64devkit.square7.ch/tutorial/graphics/3/3_4.htm
         # suggests that I should be shifting them to the left 6 bits, which would
-        # be dividing by 64, but 128 looks correct. We don't know why.
+        # be dividing by 64, but 4096 looks correct. We don't know why.
 
         return Vertex(
             position=(p_x, p_y, p_z),

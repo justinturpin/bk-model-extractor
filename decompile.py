@@ -142,243 +142,238 @@ def dump_model_textures(path: str):
 
 
 @cli.command()
-@click.argument("path")
-def dump_model_displaylist(path: str):
-    path = Path(path)
-    model = Model.parse_bytes(path.read_bytes())
+@click.argument("paths", nargs=-1)
+def dump_model_gltf(paths: str):
+    for path in paths:
+        path = Path(path)
+        model = Model.parse_bytes(path.read_bytes())
 
-    print("--------------------------")
-    print("Model loaded")
-    print(f"Command count={model.display_list_setup_header.command_count}")
+        print("--------------------------")
+        print("Model loaded")
+        print(f"Command count={model.display_list_setup_header.command_count}")
 
-    tris = 0
+        tris = 0
 
-    for command in model.display_list_setup_header.commands:
-        # print(command)
+        for command in model.display_list_setup_header.commands:
+            # print(command)
 
-        if command is jtn64.F3DCommandType.G_TRI1:
-            tris += 1
-        elif command is jtn64.F3DCommandType.G_TRI2:
-            tris += 2
-        elif command is jtn64.F3DCommandType.G_QUAD:
-            tris += 2
+            if command is jtn64.F3DCommandType.G_TRI1:
+                tris += 1
+            elif command is jtn64.F3DCommandType.G_TRI2:
+                tris += 2
+            elif command is jtn64.F3DCommandType.G_QUAD:
+                tris += 2
 
-    print(f'tri commands={tris}')
-    print(f'header tris={model.model_header.tri_count}, verts={model.model_header.vert_count}')
-    print(f'texture count={model.texture_setup_header.texture_count}')
+        print(f'tri commands={tris}')
+        print(f'header tris={model.model_header.tri_count}, verts={model.model_header.vert_count}')
+        print(f'texture count={model.texture_setup_header.texture_count}')
 
-    images = []
-    textures = []
-    materials = []
-    nodes = []
-    scene_nodes = []
-    accessors = []
+        images = []
+        textures = []
+        materials = []
+        nodes = []
+        scene_nodes = []
+        accessors = []
 
-    vertex_io = io.BytesIO()
-    triangle_io = io.BytesIO()
+        vertex_io = io.BytesIO()
+        triangle_io = io.BytesIO()
 
-    vertex_count = 0
+        vertex_count = 0
 
-    vertex_minmax = MinMaxTracker()
-    color_minmax = MinMaxTracker()
-    uv_minmax = MinMaxTracker()
+        vertex_minmax = MinMaxTracker()
+        color_minmax = MinMaxTracker()
+        uv_minmax = MinMaxTracker()
 
-    model_meshes = model.simulate_displaylist()
-    gltf_meshes = []
+        model_meshes = model.simulate_displaylist()
+        gltf_meshes = []
 
-    position_accessor_index = len(model_meshes)
-    color_accessor_index = len(model_meshes) + 1
-    uv_accessor_index = len(model_meshes) + 2
+        position_accessor_index = len(model_meshes)
+        color_accessor_index = len(model_meshes) + 1
+        uv_accessor_index = len(model_meshes) + 2
 
-    for mesh_index, mesh in enumerate(model_meshes):
-        triangle_minmax = MinMaxTracker()
-        byte_offset = len(triangle_io.getvalue())
+        for mesh_index, mesh in enumerate(model_meshes):
+            triangle_minmax = MinMaxTracker()
+            byte_offset = len(triangle_io.getvalue())
 
-        print(f'Mesh: texture_index={mesh.texture_index}, tri_count={len(mesh.indices)}')
+            print(f'Mesh: texture_index={mesh.texture_index}, tri_count={len(mesh.indices)}')
 
-        scene_nodes.append(mesh_index)
+            scene_nodes.append(mesh_index)
 
-        gltf_meshes.append(
-            pygltflib.Mesh(
-                primitives=[
-                    pygltflib.Primitive(
-                        attributes=pygltflib.Attributes(
-                            POSITION=position_accessor_index,
-                            COLOR_0=color_accessor_index,
-                            TEXCOORD_0=uv_accessor_index,
-                        ),
-                        indices=mesh_index,
-                        material=mesh.texture_index
-                    )
-                ]
+            gltf_meshes.append(
+                pygltflib.Mesh(
+                    primitives=[
+                        pygltflib.Primitive(
+                            attributes=pygltflib.Attributes(
+                                POSITION=position_accessor_index,
+                                COLOR_0=color_accessor_index,
+                                TEXCOORD_0=uv_accessor_index,
+                            ),
+                            indices=mesh_index,
+                            material=mesh.texture_index
+                        )
+                    ]
+                )
             )
-        )
 
-        nodes.append(
-            pygltflib.Node(
-                mesh=mesh_index,
-                name=f"mesh_{mesh_index}"
+            nodes.append(
+                pygltflib.Node(
+                    mesh=mesh_index,
+                    name=f"mesh_{mesh_index}"
+                )
             )
-        )
 
-        for face_index, face in enumerate(mesh.indices):
-            triangle_io.write(struct.pack("HHH", *face))
+            for face_index, face in enumerate(mesh.indices):
+                triangle_io.write(struct.pack("HHH", *face))
 
-            triangle_minmax.add(face[0])
-            triangle_minmax.add(face[1])
-            triangle_minmax.add(face[2])
+                triangle_minmax.add(face[0])
+                triangle_minmax.add(face[1])
+                triangle_minmax.add(face[2])
 
-        print(f"    byte_offset={byte_offset}")
+            print(f"    byte_offset={byte_offset}")
 
-        accessors.append(
+            accessors.append(
+                pygltflib.Accessor(
+                    bufferView=0,
+                    componentType=pygltflib.UNSIGNED_SHORT,
+                    byteOffset=byte_offset,
+                    count=len(mesh.indices)*3,
+                    type=pygltflib.SCALAR,
+                    max=[triangle_minmax.max],
+                    min=[triangle_minmax.min],
+                )
+            )
+
+        for vertex_index, vertex in enumerate(model.vertex_store_setup_header.vertices):
+            position = (
+                vertex.position[0] / 128,
+                vertex.position[1] / 128,
+                vertex.position[2] / 128
+            )
+
+            color = (
+                vertex.rgb_or_norm[0],
+                vertex.rgb_or_norm[1],
+                vertex.rgb_or_norm[2],
+            )
+
+            uv = (
+                float(vertex.uv[0]),
+                float(vertex.uv[1]),
+            )
+
+            vertex_io.write(struct.pack("fff", *position))
+            vertex_io.write(struct.pack("BBBB", 0, *color))
+            vertex_io.write(struct.pack("ff", *uv))
+
+            vertex_minmax.add(position)
+            color_minmax.add(color)
+            uv_minmax.add(uv)
+
+            vertex_count += 1
+
+        # Add the vertex accessors (position, color, then UV)
+
+        accessors += [
             pygltflib.Accessor(
-                bufferView=0,
-                componentType=pygltflib.UNSIGNED_SHORT,
-                byteOffset=byte_offset,
-                count=len(mesh.indices)*3,
-                type=pygltflib.SCALAR,
-                max=[triangle_minmax.max],
-                min=[triangle_minmax.min],
+                bufferView=1,
+                componentType=pygltflib.FLOAT,
+                count=vertex_count,
+                type=pygltflib.VEC3,
+                max=list(vertex_minmax.max),
+                min=list(vertex_minmax.min),
+            ),
+            pygltflib.Accessor(
+                bufferView=1,
+                componentType=pygltflib.UNSIGNED_BYTE,
+                normalized=True,
+                count=vertex_count,
+                type=pygltflib.VEC3,
+                byteOffset=13,
+                max=list(color_minmax.max),
+                min=list(color_minmax.min),
+            ),
+            pygltflib.Accessor(
+                bufferView=1,
+                componentType=pygltflib.FLOAT,
+                normalized=True,
+                count=vertex_count,
+                type=pygltflib.VEC2,
+                byteOffset=16,
+                max=list(uv_minmax.max),
+                min=list(uv_minmax.min),
+            ),
+        ]
+
+        for i, texture in enumerate(model.texture_data):
+            print(f"Texture {i}: {texture.width}x{texture.height}")
+
+            image = texture.to_image()
+
+            images.append(
+                pygltflib.Image(uri=jtn64.image_to_data_uri(image))
             )
-        )
 
-    for vertex_index, vertex in enumerate(model.vertex_store_setup_header.vertices):
-        position = (
-            vertex.position[0] / 128,
-            vertex.position[1] / 128,
-            vertex.position[2] / 128
-        )
+            textures.append(
+                pygltflib.Texture(sampler=0, source=i)
+            )
 
-        color = (
-            vertex.rgb_or_norm[0],
-            vertex.rgb_or_norm[1],
-            vertex.rgb_or_norm[2],
-        )
+            materials.append(
+                pygltflib.Material(
+                    pbrMetallicRoughness=pygltflib.PbrMetallicRoughness(
+                        baseColorTexture=pygltflib.TextureInfo(index=i),
+                        metallicFactor=0.0
+                    ),
+                    name=f"texture_{i}"
+                )
+            )
 
-        uv = (
-            float(vertex.uv[0]),
-            float(vertex.uv[1]),
-        )
-
-        vertex_io.write(struct.pack("fff", *position))
-        vertex_io.write(struct.pack("BBBB", 0, *color))
-        vertex_io.write(struct.pack("ff", *uv))
-
-        vertex_minmax.add(position)
-        color_minmax.add(color)
-        uv_minmax.add(uv)
-
-        vertex_count += 1
-
-    # Add the vertex accessors (position, color, then UV)
-
-    accessors += [
-        pygltflib.Accessor(
-            bufferView=1,
-            componentType=pygltflib.FLOAT,
-            count=vertex_count,
-            type=pygltflib.VEC3,
-            max=list(vertex_minmax.max),
-            min=list(vertex_minmax.min),
-        ),
-        pygltflib.Accessor(
-            bufferView=1,
-            componentType=pygltflib.UNSIGNED_BYTE,
-            normalized=True,
-            count=vertex_count,
-            type=pygltflib.VEC3,
-            byteOffset=13,
-            max=list(color_minmax.max),
-            min=list(color_minmax.min),
-        ),
-        pygltflib.Accessor(
-            bufferView=1,
-            componentType=pygltflib.FLOAT,
-            normalized=True,
-            count=vertex_count,
-            type=pygltflib.VEC2,
-            byteOffset=16,
-            max=list(uv_minmax.max),
-            min=list(uv_minmax.min),
-        ),
-    ]
-
-    for i, texture in enumerate(model.texture_data):
-        print(f"Texture {i}: {texture.width}x{texture.height}")
-
-        image = texture.to_image()
-
-        images.append(
-            pygltflib.Image(uri=jtn64.image_to_data_uri(image))
-        )
-
-        textures.append(
-            pygltflib.Texture(sampler=0, source=i)
-        )
-
-        materials.append(
-            pygltflib.Material(
-                pbrMetallicRoughness=pygltflib.PbrMetallicRoughness(
-                    baseColorTexture=pygltflib.TextureInfo(index=i),
-                    metallicFactor=0.0
+        gltf = pygltflib.GLTF2(
+            scene=0,
+            scenes=[pygltflib.Scene(nodes=scene_nodes)],
+            nodes=nodes,
+            meshes=gltf_meshes,
+            accessors=accessors,
+            images=images,
+            textures=textures,
+            materials=materials,
+            samplers=[
+                pygltflib.Sampler(
+                    magFilter=pygltflib.LINEAR,
+                    minFilter=pygltflib.NEAREST_MIPMAP_LINEAR,
+                    wrapS=pygltflib.REPEAT,
+                    wrapT=pygltflib.REPEAT,
+                )
+            ],
+            bufferViews=[
+                pygltflib.BufferView(
+                    buffer=0,
+                    byteOffset=0,
+                    byteLength=len(triangle_io.getvalue()),
+                    target=pygltflib.ELEMENT_ARRAY_BUFFER,
                 ),
-                name=f"texture_{i}"
-            )
+                pygltflib.BufferView(
+                    buffer=0,
+                    byteOffset=len(triangle_io.getvalue()),
+                    byteLength=len(vertex_io.getvalue()),
+                    byteStride=24,
+                    target=pygltflib.ARRAY_BUFFER,
+                ),
+            ],
+            buffers=[
+                pygltflib.Buffer(
+                    byteLength=len(triangle_io.getvalue()) + len(vertex_io.getvalue())
+                )
+            ],
         )
 
-    gltf = pygltflib.GLTF2(
-        scene=0,
-        scenes=[pygltflib.Scene(nodes=scene_nodes)],
-        nodes=nodes,
-        meshes=gltf_meshes,
-        accessors=accessors,
-        images=images,
-        textures=textures,
-        materials=materials,
-        samplers=[
-            pygltflib.Sampler(
-                magFilter=pygltflib.LINEAR,
-                minFilter=pygltflib.NEAREST_MIPMAP_LINEAR,
-                wrapS=pygltflib.REPEAT,
-                wrapT=pygltflib.REPEAT,
-            )
-        ],
-        bufferViews=[
-            pygltflib.BufferView(
-                buffer=0,
-                byteOffset=0,
-                byteLength=len(triangle_io.getvalue()),
-                target=pygltflib.ELEMENT_ARRAY_BUFFER,
-            ),
-            pygltflib.BufferView(
-                buffer=0,
-                byteOffset=len(triangle_io.getvalue()),
-                byteLength=len(vertex_io.getvalue()),
-                byteStride=24,
-                target=pygltflib.ARRAY_BUFFER,
-            ),
-        ],
-        buffers=[
-            pygltflib.Buffer(
-                byteLength=len(triangle_io.getvalue()) + len(vertex_io.getvalue())
-            )
-        ],
-    )
+        gltf.set_binary_blob(triangle_io.getvalue() + vertex_io.getvalue())
 
-    gltf.set_binary_blob(triangle_io.getvalue() + vertex_io.getvalue())
+        outpath = Path(f"gltf/{path.stem}.gltf")
+        outpath.parent.mkdir(exist_ok=True)
 
-    Path("test.gltf").write_bytes(
-        b"".join(gltf.save_to_bytes())
-    )
-
-    # with Path("test.obj").open("w") as f:
-    #     for vertex in model.vertex_store_setup_header.vertices:
-    #         f.write(f"v {vertex.position[0] / 100} {vertex.position[1] / 100} {vertex.position[2] / 100}\n")
-
-    #     faces = model.simulate_displaylist()
-
-    #     for face in faces:
-    #         f.write(f"f {face[0] + 1} {face[1] + 1} {face[2] + 1}\n")
+        outpath.write_bytes(
+            b"".join(gltf.save_to_bytes())
+        )
 
 
 @cli.command()
@@ -397,6 +392,7 @@ def convert_all_models():
 
             for face in faces:
                 f.write(f"f {face[0] + 1} {face[1] + 1} {face[2] + 1}\n")
+
 
 if __name__ == "__main__":
     cli()
