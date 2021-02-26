@@ -7,9 +7,10 @@ from . import textures
 from .util import BitReader, print_hex, print_bin
 from .f3d import Vertex, F3DCommandType, F3DCommandGVtx, F3DCommandGTri1, \
     F3DCommandGTri2, F3DCommandGTexture, F3DCommandSetTImg, \
-    F3DCommandSetTImgTextureFormat
+    F3DCommandSetTImgTextureFormat, F3DCommandDL, F3DCommandEndDL
 from .textures import TextureType
 from .mesh import Mesh
+from collections import Counter
 
 
 @dataclass
@@ -166,7 +167,6 @@ class DisplayListSetupHeader:
 
         for i in range(command_count):
             command_data = data[i*8 + 8:i*8 + 16]
-
             command_type = F3DCommandType(command_data[0])
 
             if command_type is F3DCommandType.G_VTX:
@@ -231,6 +231,18 @@ class DisplayListSetupHeader:
                         texture_format=texture_format,
                     )
                 )
+            elif command_type is F3DCommandType.G_DL:
+                store_return_address = bool(command_data[1])
+                segment_address = unpack(">I", command_data[4:8])[0]
+
+                commands.append(
+                    F3DCommandDL(
+                        store_return_address=store_return_address,
+                        segment_address=segment_address
+                    )
+                )
+            elif command_type is F3DCommandType.G_ENDDL:
+                commands.append(F3DCommandEndDL())
 
         return DisplayListSetupHeader(
             command_count=command_count,
@@ -449,6 +461,14 @@ class Model:
             elif isinstance(command, F3DCommandGTexture):
                 scaling_factor_s = command.scaling_factor_s
                 scaling_factor_t = command.scaling_factor_t
+            elif isinstance(command, F3DCommandDL):
+                store_return_address = command.store_return_address
+                offset = command.segment_address
+
+                # print(f"G_DL: segment_address=0x{offset:08x}, store_return_address={store_return_address}")
+            elif isinstance(command, F3DCommandEndDL):
+                # print("G_ENDDL: display list ended")
+                pass
 
         if current_mesh and current_mesh.indices:
             meshes.append(current_mesh)

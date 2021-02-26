@@ -1,7 +1,10 @@
+#!/usr/bin/env python3
+
 import zlib
 import struct
 import click
 import io
+import math
 
 from pathlib import Path
 from PIL import Image
@@ -28,6 +31,27 @@ class MinMaxTracker:
             self.max = v
         elif v > self.max:
             self.max = v
+
+
+class BoundingBoxTracker:
+    def __init__(self):
+        self.min = None
+        self.max = None
+
+    def add(self, v):
+        if self.min is None:
+            self.min = list(v)
+        else:
+            for i, x in enumerate(v):
+                if x < self.min[i]:
+                    self.min[i] = x
+
+        if self.max is None:
+            self.max = list(v)
+        else:
+            for i, x in enumerate(v):
+                if x > self.max[i]:
+                    self.max[i] = x
 
 
 def is_readable(t):
@@ -58,6 +82,11 @@ def find_strings(rom_data):
 
 
 def find_models(rom_data):
+    """
+    Finds models from rom data. Scans the entire ROM looking for
+    the Zlib header (0x1172) and then attempts to decompress it.
+    """
+
     model_count = 0
 
     for i in range(len(rom_data) - 17):
@@ -67,6 +96,7 @@ def find_models(rom_data):
         if a == 0x11 and b == 0x72:
             size = int.from_bytes(rom_data[i + 2:i + 6], byteorder='big')
 
+            # If it's greater than 5mb, it's probably not a valid object.
             if size > 5 * 1024 * 1024:
                 continue
 
@@ -82,11 +112,13 @@ def find_models(rom_data):
                     if start == 0x0B:
                         _, triangle_count, vertex_count, _ = struct.unpack(">HHHH", decompressed[0x30:0x38])
 
-                        print_hex(decompressed[0:0x38])
+                        # print_hex(decompressed[0:0x38])
 
                         print(f"Triangle_count={triangle_count}, vertex_count={vertex_count}")
 
-                        model_path = Path(f"models/{i}_model.bin")
+                        model_path = Path(f"models/{i:08x}_model.bin")
+
+                        print(f"Writing to {model_path}")
 
                         model_path.parent.mkdir(exist_ok=True)
                         model_path.write_bytes(decompressed)
@@ -105,8 +137,14 @@ def cli():
 
 
 @cli.command()
-def dump_models():
-    rom = Path("roms/bk_reswapped.n64")
+@click.argument("rom-path")
+def dump_models(rom_path: str):
+    """
+    Dump models from a Banjo Kazooie normal (big endian) ROM file
+    into a folder called `roms`.
+    """
+
+    rom = Path(rom_path)
 
     rom_data = rom.read_bytes()
 
@@ -149,24 +187,12 @@ def dump_model_gltf(paths: str):
         model = Model.parse_bytes(path.read_bytes())
 
         print("--------------------------")
-        print("Model loaded")
-        print(f"Command count={model.display_list_setup_header.command_count}")
+        print(f"  Command count={model.display_list_setup_header.command_count}")
+        print(f'  tris={model.model_header.tri_count}, verts={model.model_header.vert_count}')
+        print(f'  texture count={model.texture_setup_header.texture_count}')
 
-        tris = 0
-
-        for command in model.display_list_setup_header.commands:
-            # print(command)
-
-            if command is jtn64.F3DCommandType.G_TRI1:
-                tris += 1
-            elif command is jtn64.F3DCommandType.G_TRI2:
-                tris += 2
-            elif command is jtn64.F3DCommandType.G_QUAD:
-                tris += 2
-
-        print(f'tri commands={tris}')
-        print(f'header tris={model.model_header.tri_count}, verts={model.model_header.vert_count}')
-        print(f'texture count={model.texture_setup_header.texture_count}')
+        if model.model_header.tri_count == 0:
+            continue
 
         images = []
         textures = []
@@ -180,11 +206,17 @@ def dump_model_gltf(paths: str):
 
         vertex_count = 0
 
-        vertex_minmax = MinMaxTracker()
-        color_minmax = MinMaxTracker()
-        uv_minmax = MinMaxTracker()
+        vertex_minmax = BoundingBoxTracker()
+        color_minmax = BoundingBoxTracker()
+        uv_minmax = BoundingBoxTracker()
 
-        model_meshes = model.simulate_displaylist()
+        try:
+            model_meshes = model.simulate_displaylist()
+        except Exception as e:
+            print(e)
+
+            continue
+
         gltf_meshes = []
 
         position_accessor_index = len(model_meshes)
@@ -229,8 +261,6 @@ def dump_model_gltf(paths: str):
                 triangle_minmax.add(face[1])
                 triangle_minmax.add(face[2])
 
-            print(f"    byte_offset={byte_offset}")
-
             accessors.append(
                 pygltflib.Accessor(
                     bufferView=0,
@@ -242,6 +272,10 @@ def dump_model_gltf(paths: str):
                     min=[triangle_minmax.min],
                 )
             )
+
+        # Pad to 4 bytes
+        while len(triangle_io.getvalue()) % 4 != 0:
+            triangle_io.write(struct.pack("B", 0))
 
         for vertex_index, vertex in enumerate(model.vertex_store_setup_header.vertices):
             position = (
@@ -262,7 +296,7 @@ def dump_model_gltf(paths: str):
             )
 
             vertex_io.write(struct.pack("fff", *position))
-            vertex_io.write(struct.pack("BBBB", 0, *color))
+            vertex_io.write(struct.pack("BBBB", *color, 0))
             vertex_io.write(struct.pack("ff", *uv))
 
             vertex_minmax.add(position)
@@ -270,6 +304,10 @@ def dump_model_gltf(paths: str):
             uv_minmax.add(uv)
 
             vertex_count += 1
+
+        # Pad to 4 bytes
+        while len(vertex_io.getvalue()) % 4 != 0:
+            vertex_io.write(struct.pack("B", 0))
 
         # Add the vertex accessors (position, color, then UV)
 
@@ -288,14 +326,13 @@ def dump_model_gltf(paths: str):
                 normalized=True,
                 count=vertex_count,
                 type=pygltflib.VEC3,
-                byteOffset=13,
+                byteOffset=12,
                 max=list(color_minmax.max),
                 min=list(color_minmax.min),
             ),
             pygltflib.Accessor(
                 bufferView=1,
                 componentType=pygltflib.FLOAT,
-                normalized=True,
                 count=vertex_count,
                 type=pygltflib.VEC2,
                 byteOffset=16,
@@ -323,7 +360,8 @@ def dump_model_gltf(paths: str):
                         baseColorTexture=pygltflib.TextureInfo(index=i),
                         metallicFactor=0.0
                     ),
-                    name=f"texture_{i}"
+                    name=f"texture_{i}",
+                    alphaMode=pygltflib.MASK
                 )
             )
 

@@ -1,6 +1,6 @@
 from enum import IntEnum
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from struct import unpack
 
 
@@ -108,3 +108,14 @@ class F3DCommandSetTImg:
     texture_segment_address: int
     texture_format: F3DCommandSetTImgTextureFormat
     texture_bit_size: int
+
+
+@dataclass
+class F3DCommandDL:
+    store_return_address: bool
+    segment_address: int
+
+
+@dataclass
+class F3DCommandEndDL:
+    pass

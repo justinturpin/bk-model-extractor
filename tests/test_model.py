@@ -27,7 +27,7 @@ def test_parse_model():
 
 def test_parse_model_real():
     model_data = Path(
-        Path(__file__).parent.parent, "models/2209552_model.bin"
+        Path(__file__).parent.parent, "models/0021b710_model.bin"
     ).read_bytes()
 
     model = Model.parse_bytes(model_data)
