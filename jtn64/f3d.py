@@ -39,9 +39,11 @@ class Vertex:
 class F3DCommandType(IntEnum):
     G_SPNOOP = 0x00
     G_MTX = 0x01
-    G_VTX = 0x04
-    G_DL = 0x06
+    G_MOVEMEM = 0x03
+    G_VTX = 0x04  # Load vertex data into memory
+    G_DL = 0x06  # Call display list
     G_LOAD_UCODE = 0xAF
+    G_BRANCH_Z = 0xB0  # Test Z value
     G_SetOtherMode_H = 0xBA
     G_TRI2 = 0xB1
     G_TRI1 = 0xBF
@@ -55,13 +57,16 @@ class F3DCommandType(IntEnum):
     G_RDPPIPESYNC = 0xE7
     G_LOADTLUT = 0xF0
     G_SETTILESIZE = 0xF2
-    G_LOADBLOCK = 0xF3
+    G_LOADBLOCK = 0xF3   # Determines how much data to load after SETTIMG (TODO: investigate this)
     G_SETCOMBINE = 0xFC
     G_SETTIMG = 0xFD
     G_SETTILE = 0xF5
 
     G_UNKNOWN_1 = 185
     G_UNKNOWN_2 = 244
+
+    G_SETZIMG = 0xFE
+    G_SETCIMG = 0xFF
 
 
 @dataclass

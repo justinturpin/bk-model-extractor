@@ -175,6 +175,7 @@ class DisplayListSetupHeader:
                     vert_len, \
                     load_address = unpack(">BHI", command_data[1:])
 
+                write_start = write_start // 2
                 verts_to_write = vert_len >> 10
                 vert_data_len = vert_len & 0b0000001111111111
 
@@ -369,7 +370,7 @@ class Model:
         """
 
         meshes = []
-        vertex_index_buffer = [0] * 64
+        vertex_index_buffer = [None] * 32
 
         scaling_factor_s = 1.0
         scaling_factor_t = 1.0
@@ -388,8 +389,15 @@ class Model:
             if index not in touched_vertices:
                 # print(f"scaling vertex {index} by {scaling_factor_s}x{scaling_factor_t}")
 
-                self.vertex_store_setup_header.vertices[index].uv[0] *= scaling_factor_s
-                self.vertex_store_setup_header.vertices[index].uv[1] *= scaling_factor_t
+                try:
+                    uv = self.vertex_store_setup_header.vertices[index].uv
+                except IndexError as e:
+                    print(f"Tried to access index {index} out of {len(self.vertex_store_setup_header.vertices)}")
+
+                    raise e
+
+                uv[0] *= scaling_factor_s
+                uv[1] *= scaling_factor_t
 
                 touched_vertices.add(index)
 
@@ -464,6 +472,8 @@ class Model:
             elif isinstance(command, F3DCommandDL):
                 store_return_address = command.store_return_address
                 offset = command.segment_address
+
+                # TODO: something presumably important here
 
                 # print(f"G_DL: segment_address=0x{offset:08x}, store_return_address={store_return_address}")
             elif isinstance(command, F3DCommandEndDL):

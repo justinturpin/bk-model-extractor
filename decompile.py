@@ -181,12 +181,19 @@ def dump_model_textures(path: str):
 
 @cli.command()
 @click.argument("paths", nargs=-1)
-def dump_model_gltf(paths: str):
+@click.option("--verbose", is_flag=True)
+def dump_model_gltf(paths: str, verbose: bool):
+    """
+    Convert exported BIN models to GLTF. Saves to gltf/ in the folder running
+    the script.
+    """
+
     for path in paths:
         path = Path(path)
         model = Model.parse_bytes(path.read_bytes())
 
         print("--------------------------")
+        print(f"  Model file={path}")
         print(f"  Command count={model.display_list_setup_header.command_count}")
         print(f'  tris={model.model_header.tri_count}, verts={model.model_header.vert_count}')
         print(f'  texture count={model.texture_setup_header.texture_count}')
@@ -212,10 +219,8 @@ def dump_model_gltf(paths: str):
 
         try:
             model_meshes = model.simulate_displaylist()
-        except Exception as e:
-            print(e)
-
-            continue
+        except:
+            pass
 
         gltf_meshes = []
 
@@ -227,7 +232,8 @@ def dump_model_gltf(paths: str):
             triangle_minmax = MinMaxTracker()
             byte_offset = len(triangle_io.getvalue())
 
-            print(f'Mesh: texture_index={mesh.texture_index}, tri_count={len(mesh.indices)}')
+            if verbose:
+                print(f'Mesh: texture_index={mesh.texture_index}, tri_count={len(mesh.indices)}')
 
             scene_nodes.append(mesh_index)
 
@@ -342,7 +348,8 @@ def dump_model_gltf(paths: str):
         ]
 
         for i, texture in enumerate(model.texture_data):
-            print(f"Texture {i}: {texture.width}x{texture.height}")
+            if verbose:
+                print(f"Texture {i}: {texture.width}x{texture.height}")
 
             image = texture.to_image()
 
