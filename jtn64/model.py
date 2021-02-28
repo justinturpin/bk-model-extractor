@@ -2,7 +2,7 @@
 from PIL import Image
 from dataclasses import dataclass
 from struct import unpack
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 from . import textures
 from .util import BitReader, print_hex, print_bin
 from .f3d import Vertex, F3DCommandType, F3DCommandGVtx, F3DCommandGTri1, \
@@ -10,7 +10,6 @@ from .f3d import Vertex, F3DCommandType, F3DCommandGVtx, F3DCommandGTri1, \
     F3DCommandSetTImgTextureFormat, F3DCommandDL, F3DCommandEndDL
 from .textures import TextureType
 from .mesh import Mesh
-from collections import Counter
 
 
 @dataclass
@@ -207,10 +206,17 @@ class DisplayListSetupHeader:
                     )
                 )
             elif command_type is F3DCommandType.G_TEXTURE:
+                tile_descriptor = command_data[2] & 0b00000111
+                max_mipmap_levels = command_data[2] >> 3
+
+                enable_tile_descriptor = bool(command_data[3])
                 s, t = unpack(">HH", command_data[4:8])
 
                 commands.append(
                     F3DCommandGTexture(
+                        enable_tile_descriptor=enable_tile_descriptor,
+                        tile_descriptor=tile_descriptor,
+                        max_mipmap_levels=max_mipmap_levels,
                         scaling_factor_s=s / 2**16,
                         scaling_factor_t=t / 2**16,
                     )
@@ -273,6 +279,12 @@ class VertexStoreSetupHeader:
         return VertexStoreSetupHeader(
             vertices=vertices
         )
+
+
+@dataclass
+class SimulateDisplaylistResult:
+    meshes: List[Mesh]
+    vertex_uv_scaling: Dict[int, Tuple[float, float]]
 
 
 @dataclass
@@ -364,42 +376,34 @@ class Model:
             vertex_store_setup_header=vertex_store_setup_header
         )
 
-    def simulate_displaylist(self) -> List[Mesh]:
+    def simulate_displaylist(self) -> SimulateDisplaylistResult:
         """
         Walk through the display list and render a list of Meshes.
         """
 
-        meshes = []
+        result = SimulateDisplaylistResult(
+            meshes=[],
+            vertex_uv_scaling={}
+        )
+
         vertex_index_buffer = [None] * 32
 
         scaling_factor_s = 1.0
         scaling_factor_t = 1.0
 
-        touched_vertices = set()
-
         current_mesh = Mesh(
             texture_index=None,
-            scale_s=1.0,
-            scale_t=1.0,
             indices=[],
             vertices=[]
         )
 
         def _scale_vertex_uv(index):
-            if index not in touched_vertices:
-                # print(f"scaling vertex {index} by {scaling_factor_s}x{scaling_factor_t}")
+            if index not in result.vertex_uv_scaling:
+                # print(f"Adding {index} to vertex_uv_scaling")
 
-                try:
-                    uv = self.vertex_store_setup_header.vertices[index].uv
-                except IndexError as e:
-                    print(f"Tried to access index {index} out of {len(self.vertex_store_setup_header.vertices)}")
-
-                    raise e
-
-                uv[0] *= scaling_factor_s
-                uv[1] *= scaling_factor_t
-
-                touched_vertices.add(index)
+                result.vertex_uv_scaling[index] = (
+                    scaling_factor_s, scaling_factor_t
+                )
 
         for command in self.display_list_setup_header.commands:
             if isinstance(command, F3DCommandGVtx):
@@ -420,9 +424,9 @@ class Model:
                     vertex_index_buffer[command.vertex_3],
                 ))
 
-                _scale_vertex_uv(command.vertex_1)
-                _scale_vertex_uv(command.vertex_2)
-                _scale_vertex_uv(command.vertex_3)
+                _scale_vertex_uv(vertex_index_buffer[command.vertex_1])
+                _scale_vertex_uv(vertex_index_buffer[command.vertex_2])
+                _scale_vertex_uv(vertex_index_buffer[command.vertex_3])
 
             elif isinstance(command, F3DCommandGTri2):
                 # G_TRI2
@@ -439,12 +443,12 @@ class Model:
                     vertex_index_buffer[command.vertex_6],
                 ))
 
-                _scale_vertex_uv(command.vertex_1)
-                _scale_vertex_uv(command.vertex_2)
-                _scale_vertex_uv(command.vertex_3)
-                _scale_vertex_uv(command.vertex_4)
-                _scale_vertex_uv(command.vertex_5)
-                _scale_vertex_uv(command.vertex_6)
+                _scale_vertex_uv(vertex_index_buffer[command.vertex_1])
+                _scale_vertex_uv(vertex_index_buffer[command.vertex_2])
+                _scale_vertex_uv(vertex_index_buffer[command.vertex_3])
+                _scale_vertex_uv(vertex_index_buffer[command.vertex_4])
+                _scale_vertex_uv(vertex_index_buffer[command.vertex_5])
+                _scale_vertex_uv(vertex_index_buffer[command.vertex_6])
 
             elif isinstance(command, F3DCommandSetTImg):
                 # G_SETTIMG (Set texture image)
@@ -456,19 +460,23 @@ class Model:
 
                 if texture_index != current_mesh.texture_index:
                     if current_mesh.indices:
-                        meshes.append(current_mesh)
+                        result.meshes.append(current_mesh)
 
                     current_mesh = Mesh(
                         texture_index=texture_index,
-                        scale_s=1.0,
-                        scale_t=1.0,
                         indices=[],
                         vertices=[]
                     )
 
             elif isinstance(command, F3DCommandGTexture):
-                scaling_factor_s = command.scaling_factor_s
-                scaling_factor_t = command.scaling_factor_t
+                # G_TEXTURE tells the GPU how much to scale the UV coordinates
+                # by, so we need to store this information so that we can
+                # scale the UV's later.
+
+                # print(command)
+
+                scaling_factor_s = command.scaling_factor_s * 2
+                scaling_factor_t = command.scaling_factor_t * 2
             elif isinstance(command, F3DCommandDL):
                 store_return_address = command.store_return_address
                 offset = command.segment_address
@@ -481,6 +489,6 @@ class Model:
                 pass
 
         if current_mesh and current_mesh.indices:
-            meshes.append(current_mesh)
+            result.meshes.append(current_mesh)
 
-        return meshes
+        return result

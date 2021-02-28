@@ -96,8 +96,11 @@ class F3DCommandGTri2:
 
 @dataclass
 class F3DCommandGTexture:
+    enable_tile_descriptor: bool
     scaling_factor_s: int
     scaling_factor_t: int
+    max_mipmap_levels: int
+    tile_descriptor: int
 
 
 class F3DCommandSetTImgTextureFormat(IntEnum):

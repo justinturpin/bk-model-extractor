@@ -195,10 +195,12 @@ def dump_model_gltf(paths: str, verbose: bool):
         print("--------------------------")
         print(f"  Model file={path}")
         print(f"  Command count={model.display_list_setup_header.command_count}")
-        print(f'  tris={model.model_header.tri_count}, verts={model.model_header.vert_count}')
-        print(f'  texture count={model.texture_setup_header.texture_count}')
+        print(f"  tris={model.model_header.tri_count}, verts={model.model_header.vert_count}")
+        print(f"  texture count={model.texture_setup_header.texture_count}")
 
         if model.model_header.tri_count == 0:
+            print("  Model has no triangles, skipping.")
+
             continue
 
         images = []
@@ -217,18 +219,15 @@ def dump_model_gltf(paths: str, verbose: bool):
         color_minmax = BoundingBoxTracker()
         uv_minmax = BoundingBoxTracker()
 
-        try:
-            model_meshes = model.simulate_displaylist()
-        except:
-            pass
+        displaylist_result = model.simulate_displaylist()
 
         gltf_meshes = []
 
-        position_accessor_index = len(model_meshes)
-        color_accessor_index = len(model_meshes) + 1
-        uv_accessor_index = len(model_meshes) + 2
+        position_accessor_index = len(displaylist_result.meshes)
+        color_accessor_index = len(displaylist_result.meshes) + 1
+        uv_accessor_index = len(displaylist_result.meshes) + 2
 
-        for mesh_index, mesh in enumerate(model_meshes):
+        for mesh_index, mesh in enumerate(displaylist_result.meshes):
             triangle_minmax = MinMaxTracker()
             byte_offset = len(triangle_io.getvalue())
 
@@ -296,9 +295,15 @@ def dump_model_gltf(paths: str, verbose: bool):
                 vertex.rgb_or_norm[2],
             )
 
+            # Fetch the UV scale from the Displaylist result, since it modifies
+            # the vertex buffer
+            uv_scale = displaylist_result.vertex_uv_scaling.get(
+                vertex_index, (1.0, 1.0)
+            )
+
             uv = (
-                float(vertex.uv[0]),
-                float(vertex.uv[1]),
+                float(vertex.uv[0]) * uv_scale[0],
+                float(vertex.uv[1]) * uv_scale[1],
             )
 
             vertex_io.write(struct.pack("fff", *position))
